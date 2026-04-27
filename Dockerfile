@@ -1,37 +1,46 @@
 FROM php:7.4-fpm-bullseye
 
-LABEL MAINTAINER="BasantMandal <support@hashtagkitto.co.in>"
+LABEL org.opencontainers.image.title="HK2 Magento PHP 7.4 FPM" \
+      org.opencontainers.image.description="PHP 7.4 FPM environment optimized for Magento 2" \
+      org.opencontainers.image.source="https://github.com/basantmandal/docker-magento2-php74" \
+      org.opencontainers.image.version="3.0" \
+      org.opencontainers.image.authors="Basant Mandal" \
+      org.opencontainers.image.url="https://github.com/basantmandal/docker-magento2-php74" \
+      org.opencontainers.image.documentation="https://github.com/basantmandal/docker-magento2-php74#readme" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.created="2026-04-27T00:00:00Z" \
+      org.opencontainers.image.revision="git-commit-sha"
 
 USER root
 
-# Set PHP Environment Variables
-ENV PHP_MEMORY_LIMIT 2048M
-ENV PHP_MAX_EXECUTION_TIME 60
-ENV PHP_UPLOAD_MAX_FILESIZE 50M
-ENV PHP_POST_MAX_SIZE 50MM
+# -----------------------------
+# Environment Variables
+# -----------------------------
+ENV TZ=Asia/Kolkata \
+    PHP_MEMORY_LIMIT=2048M \
+    PHP_MAX_EXECUTION_TIME=60 \
+    PHP_UPLOAD_MAX_FILESIZE=50M \
+    PHP_POST_MAX_SIZE=50M
 
-# Other Environment Variables
-ENV TZ=Asia/Kolkata
 ARG CUSTOM_PHP_VERSION=7.4
-ENV CUSTOM_PHP_INI_PATH=/usr/local/etc/php/php.ini-development
-ENV CUSTOM_PHP_INI_DIR==/usr/local/etc/php
+ARG INSTALL_XDEBUG=false
 
-# Install dependencies
+# -----------------------------
+# System Dependencies + Cleanup
+# -----------------------------
 RUN apt-get update && apt-get install -y \
     build-essential \
     cron \
     curl \
-    g++ \
     git \
-    iputils-ping \ 
+    iputils-ping \
     jpegoptim optipng pngquant gifsicle \
     libbz2-dev \
     libcurl4-openssl-dev \
     libfreetype6-dev \
     libicu-dev \
     libjpeg62-turbo-dev \
-    libmariadb-dev  \
-    libmcrypt-dev \
+    libmariadb-dev \
     libonig-dev \
     libpng-dev \
     libsodium-dev \
@@ -39,107 +48,133 @@ RUN apt-get update && apt-get install -y \
     libwebp-dev \
     libxml2-dev \
     libxpm-dev \
-    libxslt-dev \
-    libzip-dev \ 
+    libxslt1-dev \
+    libzip-dev \
     locales \
-    lsof \
-    nano \
     sendmail \
     sqlite3 \
     unzip \
-    wget \
     zip \
-    zlib1g-dev
+    zlib1g-dev \
+    msmtp \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install Composer 1
-COPY --from=composer:1.10.12 /usr/bin/composer /usr/bin/composer
+# -----------------------------
+# Composer (v1 for Magento 2.3.x stability)
+# -----------------------------
+COPY --from=composer:1.10.26 /usr/bin/composer /usr/bin/composer
 
-# Install JDK-15
-RUN apt-get install -y openjdk-11-jdk 
-ENV JAVA_HOME /usr/lib/jvm/java-11-openjdk-amd64/
-RUN export JAVA_HOME
+# -----------------------------
+# PHP Extensions
+# -----------------------------
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j$(nproc) \
+    bcmath \
+    calendar \
+    curl \
+    exif \
+    gd \
+    intl \
+    mysqli \
+    opcache \
+    pdo_mysql \
+    pdo_sqlite \
+    soap \
+    sockets \
+    xsl \
+    zip
 
-# Install GD
-RUN docker-php-ext-configure gd --with-freetype --with-jpeg
-RUN docker-php-ext-install gd
+# -----------------------------
+# Redis Extension (stable for PHP 7.4)
+# -----------------------------
+RUN pecl install redis-5.3.7 \
+    && docker-php-ext-enable redis
 
-# Install Magento Required Extensions
-RUN docker-php-ext-install bcmath
-RUN docker-php-ext-install calendar 
-RUN docker-php-ext-install curl 
-RUN docker-php-ext-install exif 
-RUN docker-php-ext-install intl 
-RUN docker-php-ext-install mysqli 
-RUN docker-php-ext-install opcache 
-RUN docker-php-ext-install pdo_mysql
-RUN docker-php-ext-install pdo_sqlite 
-RUN docker-php-ext-install soap 
-RUN docker-php-ext-install sockets 
-RUN docker-php-ext-install xsl 
-RUN docker-php-ext-install zip 
+# -----------------------------
+# Optional Xdebug
+# -----------------------------
+RUN if [ "$INSTALL_XDEBUG" = "true" ]; then \
+    pecl install xdebug-2.9.0 && docker-php-ext-enable xdebug ; \
+    fi
 
-# Install Redis
-RUN pecl install redis-6.1.0 &&  docker-php-ext-enable redis
+# -----------------------------
+# IonCube Loader (Multi-Arch Safe)
+# -----------------------------
+ARG TARGETARCH
 
-# IonCube Loader
-ARG IONCUBE_PATH=./ioncube/2025_01_30/ioncube_loaders_lin_x86-64.tar.gz
-COPY $IONCUBE_PATH /tmp/
-RUN tar xzf /tmp/ioncube_loaders_lin_x86-64.tar.gz -C /usr/local
-RUN (echo 'zend_extension=ioncube_loader_lin_${CUSTOM_PHP_VERSION}.so' > ${CUSTOM_PHP_INI_PATH})
+RUN set -e; \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        IONCUBE_URL="https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_aarch64.tar.gz"; \
+    else \
+        IONCUBE_URL="https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz"; \
+    fi && \
+    curl -fsSL "$IONCUBE_URL" -o /tmp/ioncube.tar.gz && \
+    tar xzf /tmp/ioncube.tar.gz -C /usr/local && \
+    PHP_EXT_DIR="$(php -r 'echo ini_get("extension_dir");')" && \
+    cp "/usr/local/ioncube/ioncube_loader_lin_${CUSTOM_PHP_VERSION}.so" "$PHP_EXT_DIR/" && \
+    echo "zend_extension=ioncube_loader_lin_${CUSTOM_PHP_VERSION}.so" > /usr/local/etc/php/conf.d/00-ioncube.ini && \
+    rm -rf /tmp/ioncube*
 
-# Add SendMail to Php.ini
-RUN (echo 'sendmail_path=/usr/bin/msmtp -t' > ${CUSTOM_PHP_INI_PATH})
+# -----------------------------
+# PHP Configuration (conf.d approach)
+# -----------------------------
+RUN echo "memory_limit=${PHP_MEMORY_LIMIT}" > /usr/local/etc/php/conf.d/zz-custom.ini \
+    && echo "upload_max_filesize=${PHP_UPLOAD_MAX_FILESIZE}" >> /usr/local/etc/php/conf.d/zz-custom.ini \
+    && echo "post_max_size=${PHP_POST_MAX_SIZE}" >> /usr/local/etc/php/conf.d/zz-custom.ini \
+    && echo "max_execution_time=${PHP_MAX_EXECUTION_TIME}" >> /usr/local/etc/php/conf.d/zz-custom.ini \
+    && echo "date.timezone=${TZ}" >> /usr/local/etc/php/conf.d/zz-custom.ini \
+    && echo "opcache.enable=1" >> /usr/local/etc/php/conf.d/zz-custom.ini \
+    && echo "opcache.validate_timestamps=0" >> /usr/local/etc/php/conf.d/zz-custom.ini \
+    && echo "opcache.memory_consumption=512" >> /usr/local/etc/php/conf.d/zz-custom.ini
 
-# Add Default Time to Php.ini
-RUN (echo 'date.timezone=Asia/Kolkata' > ${CUSTOM_PHP_INI_PATH})
+# -----------------------------
+# MSMTP (Sendmail replacement)
+# -----------------------------
+COPY msmtp.conf /etc/msmtprc
 
-# Move php.ini to
-RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
+RUN chmod 600 /etc/msmtprc \
+    && chown root:root /etc/msmtprc \
+    && ln -sf /usr/bin/msmtp /usr/sbin/sendmail \
+    && echo "sendmail_path=/usr/bin/msmtp -t" \
+    > /usr/local/etc/php/conf.d/sendmail.ini \
+    && touch /var/log/msmtp.log \
+    && chmod 666 /var/log/msmtp.log
 
-# Install Xdebug - 2.9.0
-RUN pecl install xdebug-2.9.0 && \
-    docker-php-ext-enable xdebug && \
-    mkdir /var/log/xdebug
+# -----------------------------
+# Locale
+# -----------------------------
+RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen \
+    && locale-gen
 
-# Send Mail - MSMTP
-RUN apt-get update && apt-get install -y msmtp
-RUN ln -sf /usr/bin/msmtp /usr/sbin/sendmail
-RUN touch /etc/msmtprc
-RUN chmod 777 /etc/msmtprc
+ENV LANG=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    LC_ALL=en_US.UTF-8
 
-# set locale to utf-8
-RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && locale-gen
-ENV LANG='en_US.UTF-8' LANGUAGE='en_US:en' LC_ALL='en_US.UTF-8'
-
-# Clear up
-RUN apt-get clean && rm -rf /var/lib/apt/lists/* /var/tmp/* /tmp/*
-
-# User Permission/User Add
+# -----------------------------
+# User Setup
+# -----------------------------
 ARG USER=docker
-RUN groupadd --gid 1000 $USER \
-    && useradd --uid 1000 --gid $USER --shell /bin/bash --create-home $USER
-RUN adduser $USER sudo
 
-# Update Permission
-RUN chown $USER:www-data /var/www/html;
+RUN groupadd --gid 1000 ${USER} \
+    && useradd --uid 1000 --gid ${USER} --shell /bin/bash --create-home ${USER}
 
-# Use the Current User
-USER $USER
+# Set permissions
+RUN chown -R ${USER}:www-data /var/www/html
 
-# Update Composer Auth File
-RUN mkdir -p /home/$USER/.composer && \
-    touch /home/$USER/.composer/auth.json && \
-    echo "{" > /home/$USER/.composer/auth.json && \
-    echo "}" >> /home/$USER/.composer/auth.json && \
-    mkdir -p /home/$USER/.magento-cloud/bin && \
-    chown -R $USER:$USER /home/$USER
+# Switch user
+USER ${USER}
 
-# Magento Cloud Installation
-RUN curl -sS https://accounts.magento.cloud/cli/installer | php
-RUN export PATH=$PATH:$HOME/.magento-cloud/bin
+# -----------------------------
+# Composer Setup (user-level)
+# -----------------------------
+RUN mkdir -p /home/${USER}/.composer \
+    && echo "{}" > /home/${USER}/.composer/auth.json \
+    && mkdir -p /home/${USER}/.composer/vendor/bin
 
-# Composer Bash Reload
-RUN echo 'export PATH="$PATH:$HOME/.composer/vendor/bin"' >> ~/.bashrc
+ENV PATH="/home/${USER}/.composer/vendor/bin:${PATH}"
 
-# Set working directory
+# -----------------------------
+# Working Directory
+# -----------------------------
 WORKDIR /var/www/html

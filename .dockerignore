@@ -1,12 +1,56 @@
-.env
-.mysql
-.log
-**/node_modules/
-**/dist
+# Git and GitHub
 .git
 .gitignore
-CHANGELOG.md
-docker-compose.test.yml
+.github/
+
+# Documentation and Project Meta
 docs/
+CHANGELOG.md
 LICENSE
+COPYING.txt
 README.md
+PROJECT.md
+PROMPT.md
+SECURITY.md
+.releaserc.json
+
+# IDE and Editor Files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS Generated Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Build Context & Logs
+*.log
+*.zip
+*.jar
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Development & Test
+test/
+docker-compose.*.yml
+!docker-compose.yml
+.mysql/
+.cache/
+.rdb/
+
+# Node modules & Build Outputs
+**/node_modules/
+**/dist/
+
+# Scripts
+*.sh
